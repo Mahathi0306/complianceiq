@@ -1,0 +1,55 @@
+services:
+  mongo:
+    image: mongo:7
+    restart: unless-stopped
+    volumes:
+      - mongo-data:/data/db
+
+  redis:
+    image: redis:7-alpine
+    restart: unless-stopped
+
+  ai:
+    build: ./ai-service
+    restart: unless-stopped
+    environment:
+      ANTHROPIC_API_KEY: ${ANTHROPIC_API_KEY:-}
+      AI_MODEL: ${AI_MODEL:-claude-sonnet-5-5}
+    ports:
+      - "8000:8000"
+
+  api:
+    build: ./server
+    restart: unless-stopped
+    depends_on:
+      - mongo
+      - redis
+      - ai
+    environment:
+      PORT: 4000
+      MONGO_URI: mongodb://mongo:27017/complianceiq
+      REDIS_URL: redis://redis:6379
+      AI_SERVICE_URL: http://ai:8000
+      JWT_SECRET: ${JWT_SECRET:-change-this-access-secret}
+      JWT_REFRESH_SECRET: ${JWT_REFRESH_SECRET:-change-this-refresh-secret}
+      CLIENT_ORIGIN: http://localhost:5173
+    volumes:
+      - uploads:/app/uploads
+    ports:
+      - "4000:4000"
+
+  worker:
+    build: ./server
+    restart: unless-stopped
+    command: ["node", "src/worker.js"]
+    depends_on:
+      - mongo
+      - redis
+    environment:
+      MONGO_URI: mongodb://mongo:27017/complianceiq
+      REDIS_URL: redis://redis:6379
+      WORKER_CONCURRENCY: 8
+
+volumes:
+  mongo-data:
+  uploads:

@@ -1,0 +1,279 @@
+openapi: 3.0.3
+info:
+  title: ComplianceIQ API
+  version: 1.0.0
+  description: KYC onboarding, AML transaction monitoring and case management
+servers:
+  - url: http://localhost:4000/api
+components:
+  securitySchemes:
+    bearer:
+      type: http
+      scheme: bearer
+      bearerFormat: JWT
+  schemas:
+    Error:
+      type: object
+      properties:
+        error: { type: string }
+        details: {}
+    Credentials:
+      type: object
+      required: [email, password]
+      properties:
+        email: { type: string, format: email }
+        password: { type: string }
+    Application:
+      type: object
+      required: [fullName, dob, pan, country, occupation, annualIncome, expectedMonthlyVolume]
+      properties:
+        fullName: { type: string }
+        dob: { type: string, format: date }
+        pan: { type: string, example: ABCDE1234F }
+        country: { type: string, example: IN }
+        occupation: { type: string }
+        annualIncome: { type: number }
+        expectedMonthlyVolume: { type: number }
+        isPep: { type: boolean }
+    Transaction:
+      type: object
+      required: [accountId, type, amount]
+      properties:
+        accountId: { type: string }
+        counterpartyAccountId: { type: string, nullable: true }
+        type: { type: string, enum: [DEPOSIT, WITHDRAWAL, TRANSFER] }
+        amount: { type: number }
+        currency: { type: string, example: INR }
+        country: { type: string }
+        occurredAt: { type: string, format: date-time }
+security:
+  - bearer: []
+paths:
+  /auth/register:
+    post:
+      tags: [Auth]
+      security: []
+      summary: Register a customer account
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              allOf:
+                - $ref: '#/components/schemas/Credentials'
+                - type: object
+                  required: [name]
+                  properties:
+                    name: { type: string }
+      responses:
+        '201': { description: Account created with tokens }
+        '409': { description: Email already registered }
+  /auth/login:
+    post:
+      tags: [Auth]
+      security: []
+      summary: Sign in
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/Credentials' }
+      responses:
+        '200': { description: Access and refresh tokens }
+        '401': { description: Incorrect credentials }
+  /auth/refresh:
+    post:
+      tags: [Auth]
+      security: []
+      summary: Exchange a refresh token for a new token pair
+      responses:
+        '200': { description: New tokens }
+  /kyc/applications:
+    post:
+      tags: [KYC]
+      summary: Start a KYC application
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/Application' }
+      responses:
+        '201': { description: Application created in SUBMITTED state }
+    get:
+      tags: [KYC]
+      summary: List applications
+      parameters:
+        - { name: state, in: query, schema: { type: string } }
+        - { name: page, in: query, schema: { type: integer } }
+      responses:
+        '200': { description: Paginated applications }
+  /kyc/applications/{id}/documents:
+    post:
+      tags: [KYC]
+      summary: Upload a verification document
+      parameters:
+        - { name: id, in: path, required: true, schema: { type: string } }
+      requestBody:
+        required: true
+        content:
+          multipart/form-data:
+            schema:
+              type: object
+              properties:
+                kind: { type: string, enum: [ID_PROOF, ADDRESS_PROOF, SELFIE] }
+                file: { type: string, format: binary }
+      responses:
+        '201': { description: Document stored }
+  /kyc/applications/{id}/process:
+    post:
+      tags: [KYC]
+      summary: Run verification, screening and risk scoring
+      parameters:
+        - { name: id, in: path, required: true, schema: { type: string } }
+      responses:
+        '200': { description: Application after processing }
+        '422': { description: Required documents missing }
+  /kyc/applications/{id}/decision:
+    post:
+      tags: [KYC]
+      summary: Officer decision for an application in manual review
+      parameters:
+        - { name: id, in: path, required: true, schema: { type: string } }
+      responses:
+        '200': { description: Decision recorded }
+  /transactions:
+    post:
+      tags: [Transactions]
+      summary: Ingest a transaction for monitoring
+      parameters:
+        - { name: Idempotency-Key, in: header, required: true, schema: { type: string } }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/Transaction' }
+      responses:
+        '202': { description: Accepted and queued }
+        '200': { description: Duplicate request, original returned }
+    get:
+      tags: [Transactions]
+      summary: List transactions
+      responses:
+        '200': { description: Paginated transactions }
+  /alerts:
+    get:
+      tags: [Alerts]
+      summary: Prioritised alert queue
+      parameters:
+        - { name: status, in: query, schema: { type: string } }
+        - { name: severity, in: query, schema: { type: string } }
+        - { name: assignedTo, in: query, schema: { type: string } }
+      responses:
+        '200': { description: Paginated alerts }
+  /alerts/search:
+    get:
+      tags: [Alerts]
+      summary: Natural language alert search
+      parameters:
+        - { name: q, in: query, required: true, schema: { type: string } }
+      responses:
+        '200': { description: Matching alerts and how the query was interpreted }
+  /alerts/{id}/assign:
+    patch:
+      tags: [Alerts]
+      summary: Assign an alert
+      parameters:
+        - { name: id, in: path, required: true, schema: { type: string } }
+      responses:
+        '200': { description: Alert updated }
+  /alerts/{id}/dismiss:
+    post:
+      tags: [Alerts]
+      summary: Dismiss a false positive
+      parameters:
+        - { name: id, in: path, required: true, schema: { type: string } }
+      responses:
+        '200': { description: Alert dismissed }
+  /cases:
+    post:
+      tags: [Cases]
+      summary: Open a case from alerts
+      responses:
+        '201': { description: Case created }
+    get:
+      tags: [Cases]
+      summary: List cases
+      responses:
+        '200': { description: Paginated cases }
+  /cases/{id}:
+    get:
+      tags: [Cases]
+      summary: Case detail
+      parameters:
+        - { name: id, in: path, required: true, schema: { type: string } }
+      responses:
+        '200': { description: Case with alerts, notes and customer profile }
+  /cases/{id}/summary:
+    post:
+      tags: [Cases]
+      summary: Generate an AI investigation brief
+      parameters:
+        - { name: id, in: path, required: true, schema: { type: string } }
+      responses:
+        '200': { description: Generated summary }
+  /cases/{id}/str:
+    post:
+      tags: [Cases]
+      summary: Generate an STR draft
+      parameters:
+        - { name: id, in: path, required: true, schema: { type: string } }
+      responses:
+        '200': { description: Draft report awaiting review }
+  /cases/{id}/str/approve:
+    post:
+      tags: [Cases]
+      summary: Officer approval of the STR draft
+      parameters:
+        - { name: id, in: path, required: true, schema: { type: string } }
+      responses:
+        '200': { description: Case marked STR_FILED }
+  /rules:
+    get:
+      tags: [Rules]
+      summary: List monitoring rules
+      responses:
+        '200': { description: Rules }
+    post:
+      tags: [Rules]
+      summary: Create a rule (admin)
+      responses:
+        '201': { description: Rule created }
+  /watchlist/search:
+    get:
+      tags: [Screening]
+      summary: Fuzzy name screening
+      parameters:
+        - { name: name, in: query, required: true, schema: { type: string } }
+      responses:
+        '200': { description: Ranked matches }
+  /reports/summary:
+    get:
+      tags: [Reports]
+      summary: Dashboard metrics
+      responses:
+        '200': { description: Aggregated figures }
+  /ai/ask:
+    post:
+      tags: [AI]
+      summary: Ask the investigation assistant
+      responses:
+        '200': { description: Answer with sources }
+  /audit:
+    get:
+      tags: [Audit]
+      summary: Audit trail
+      parameters:
+        - { name: entity, in: query, schema: { type: string } }
+        - { name: entityId, in: query, schema: { type: string } }
+      responses:
+        '200': { description: Audit records }
